@@ -24,7 +24,7 @@ climfile    = 'ORNL_forcing.txt', ! 'BCI_forcing.csv' !
 Sc_prcp     = 1.0, ! 0.5 ! 0.25, ! 1/4 rainfall
 Sc_dT       = 0.0, ! degree C
 CO2_c       = 370.0, ! 570.0, ! ppm, The year of 2000
-model_run_years =  890, ! 1590, !
+model_run_years =  2, ! 1590, !
 outputhourly    = .False., ! .True.
 outputdaily     = .False., ! .True.,  !
 do_closedN_run  = .False., ! .True.  !
@@ -54,6 +54,7 @@ c_LLS      = 28.5714, ! yr/(kg C m-2), 1/LMAs, ! leafLS = c_LLS * LMA, when LMAs
 MI0Fire    = 0.25, ! 0.20, ! 0.33, ! 0.5, ! 0.3, ! when P/ET = MI0Fire, Frisk = 0.5; High for high fire probability at given P
 FSBM0      = 0.06, ! 0.15, ! 0.2, ! 0.4, kgC m-2, for grass fire severity
 mu0_FireG  = 0.05, ! mortality rates of grasses due to fire
+C0_Nfix    = 12.0, ! Carbon cost per unit N fixation, 12 gC/gN 
 
 ! species   0:C4G,  1:C3G,  2:TrE,  3:TrD,  4:TmE,  5:TmD,  6:Nfx,  7:DeS
 pt        = 1,      0,      0,      0,      0,      0,      0,      0,      ! 0 for C3, 1 for C4
@@ -86,19 +87,18 @@ gdd_par1  = 50.,    20.,    0.0,    0.0,    0.0,    50.,    50.,    50.,    ! 50
 gdd_par2  = 800.,   300.,   0.0,    600.,   0.0,    600.,   600.,   600.,   ! 650.d0  !800.d0  ! 638.d0
 gdd_par3  = -0.02,  -0.02,  -0.02,  -0.02,  -0.02,  -0.02,  -0.02,  -0.02,  ! -0.01d0
 R0_Nfix   = 0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    0.03,   0.0,    ! Nitrogen fixation rate, 0.03 kgN kgRootC-1 yr-1; Cost: 12gC/gN
-C0_Nfix   = 0.0,    0.0,    0.0,    0.0,    0.0,    0.0,    12.0,   0.0     ! Carbon cost per unit N fixation, 15 gC/gN (11/17)
 /
 
 &global_setting_nml
 ! For netCDF files
-ncfilepath   = '/media/eweng/HD2/weng/Data/unzippedNC/',
+ncfilepath   = '/discover/nobackup/plerner/WIE-MIP/cru_jra/',
 ncversion    = 'crujra.v2.4.5d.',
-veg_path     = '/media/eweng/HD2/weng/Data/Vegetation/'
-veg_file     = 'pft2011_0.5x0.5.nc' ! Vegetation coverage
+veg_path     = '/discover/nobackup/plerner/WIE-MIP/Vegetation/',
+veg_file     = 'pft11_0.5x0.5_PL.nc' ! Vegetation coverage
 WriteForcing = .False., ! .True., ! Write interpolated grid forcing data
 
 ! For the interpolated grid data files
-int_fpath  = '/media/eweng/HD2/weng/Data/interp30yrs/',
+int_fpath  = '/discover/nobackup/projects/giss-ocean/plerner/WIE-MIP/BiomeE/cru_jra_int/',
 int_prefix = 'crujra.v2.4.5d.',
 GridListFile = 'GlobalVegGridList.csv',
 
@@ -107,8 +107,8 @@ LowerLon = 1,   !  160: Kansas; 120: Nevada; Grid No. through longitude (-179.75
 UpperLon = 720, !  209,
 LowerLat = 61, ! 247, ! 252: Tennessee, Las Vegas. Grid No. through latitude (-89.75 ~ 89.75)
 UpperLat = 320, ! 247,252
-yr_start = 1990, ! 2010, ! Data start year of netCDF files
-yr_end   = 2019, ! 2011, ! Data end year
+yr_start = 2020, ! 2010, ! Data start year of netCDF files
+yr_end   = 2021, ! 2011, ! Data end year
 grid_No1 = StartGrid, ! 1,
 grid_No2 = EndGrid,   ! 56395, ! Maximum grids in the vegetated land
 StepLatLon = ResGrid

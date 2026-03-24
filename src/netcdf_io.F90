@@ -35,20 +35,37 @@ subroutine ReadNCfiles (fpath,fields,yr_start, yr_end)
    integer, pointer :: GridMask(:,:) => null() ! Nlon, Nlat
    integer :: N_yrs,totL,N_vars
    integer :: istat1,i,j,k,m,iLon,iLat
-   real :: dataarray(Nlon,Nlat,Ntime),timearray(Ntime)
+   integer :: nlon_sub, nlat_sub
+   integer :: start3(3), count3(3)
+   integer :: start2(2), count2(2)
+   real, allocatable :: dataarray(:,:,:), timearray(:)
    real :: PFTdata(144,90,9),VegFraction(144,90) ! Not used, Weng 01/15/2026
-   real :: Vegetated(Nlon,Nlat)
+   real, allocatable :: Vegetated(:,:)
    logical :: Do_HighResVegMap = .True. ! 0.5x0.5
 
    ! Read in a vegetation map
    allocate(GridMask(LowerLon:UpperLon, LowerLat:UpperLat))
+
+   ! Sub-domain sizes and hyperslab indices for netCDF reads
+   nlon_sub = UpperLon - LowerLon + 1
+   nlat_sub = UpperLat - LowerLat + 1
+   start3 = [LowerLon, LowerLat, 1]
+   count3 = [nlon_sub, nlat_sub, Ntime]
+   start2 = [LowerLon, LowerLat]
+   count2 = [nlon_sub, nlat_sub]
+
+   ! Allocate (sub-domain) temporary arrays for netCDF reading
+   allocate(dataarray(LowerLon:UpperLon, LowerLat:UpperLat, Ntime))
+   allocate(timearray(Ntime))
+   if(Do_HighResVegMap) allocate(Vegetated(LowerLon:UpperLon, LowerLat:UpperLat))
+
    PFTID = [character(len=3) :: 'C4G','C3G','TEB','TDB','EGN','CDB','CDN','CAS','AAS']
    Vegstr= 'TOTAL_VEG'
 
    if(Do_HighResVegMap) then ! Read in 0.5x0.5 Vegetation coverage data file
      fveg  = trim(veg_path)//trim(veg_file)
      write(*,*)'Reading ',trim(fveg)
-     call nc_read_2D(fveg,trim(Vegstr),Nlon,Nlat,Vegetated(:,:))
+     call nc_read_2D(fveg, trim(Vegstr), Vegetated, start2, count2)
 
    else                      ! Read in 2x2.5 BiomeE PFT data
      ! Not used anymore. I keep this section here just in case we are
@@ -56,7 +73,7 @@ subroutine ReadNCfiles (fpath,fields,yr_start, yr_end)
      fnc   = trim(fpath)//'BiomeE-PFTs.nc'
      write(*,*)'Reading ',trim(fnc)
      do i=1, 9
-       call nc_read_2D(fnc,PFTID(i),144,90,PFTdata(:,:,i))
+       call nc_read_2D(fnc, PFTID(i), PFTdata(:,:,i))
        write(*,*)"Map PFT: ", PFTID(i)
      enddo
      do i =1, 144
@@ -74,7 +91,7 @@ subroutine ReadNCfiles (fpath,fields,yr_start, yr_end)
     call unzip_gzip_file(trim(fnc)//'.gz')
 #endif
 
-    call nc_read_3D(fnc,trim(fields(1)),Nlon,Nlat,Ntime,dataarray)
+    call nc_read_3D(fnc, trim(fields(1)), dataarray, start3, count3)
 
 #ifdef ZippedNCfiles
     command = 'rm '//trim(fnc) ! Remove unziped file
@@ -154,7 +171,7 @@ subroutine ReadNCfiles (fpath,fields,yr_start, yr_end)
 #endif
 
         write(*,*)'Reading: ', trim(fnc)
-        call nc_read_3D(fnc,trim(fields(j)),Nlon,Nlat,Ntime,dataarray)
+        call nc_read_3D(fnc, trim(fields(j)), dataarray, start3, count3)
         m = 0
         do iLon = LowerLon, UpperLon
           do iLat = LowerLat, UpperLat
@@ -168,7 +185,7 @@ subroutine ReadNCfiles (fpath,fields,yr_start, yr_end)
 
         ! Read in the time array of the first variable
         if(j == 1)then
-          call nc_read_1D(fnc,'time',Ntime,timearray)
+          call nc_read_1D(fnc, 'time', timearray)
           CRUtime((i-1)*Ntime+1: i*Ntime) = timearray
         endif
 
@@ -178,7 +195,10 @@ subroutine ReadNCfiles (fpath,fields,yr_start, yr_end)
 #endif
       enddo ! N_yrs
     enddo   ! All variables
-    ! Release allocatable arrays
+    ! Release temporary allocatable arrays
+    if(allocated(dataarray)) deallocate(dataarray)
+    if(allocated(timearray)) deallocate(timearray)
+    if(allocated(Vegetated)) deallocate(Vegetated)
     deallocate(GridMask)
 end subroutine ReadNCfiles
 
@@ -471,19 +491,39 @@ subroutine read_interpolatedCRU(fpath,fprefix,GridID,year0,year1,forcingData,fil
 
   real,allocatable :: timecols(:,:), input_data(:,:)
   real    :: temp(niterms)
-  integer :: istat1,istat2
+  integer :: istat2
   integer :: m,n,i,iyr,iday,ihour
+  integer :: u, exitstat
+  logical :: csv_exists, unzip_ok
 
-  ! Findout the data file
+  ! Find out the data file
   write(GridStr,GridIDFMT) GridID
-  fname = trim(fprefix)//trim(GridStr)//'_forcing.csv'
-  climfile=trim(fpath)//trim(fname)
-  INQUIRE (file=trim(climfile)//'.gz', EXIST=file_exists)
-  if (file_exists) then
-    call unzip_gzip_file(trim(climfile)//'.gz')
-  else
-    forcingData => NULL()
-    write (*, '("read_interpolatedCRU: ", a, " does not exist")') trim(climfile)
+  fname    = trim(fprefix)//trim(GridStr)//'_forcing.csv'
+  climfile = trim(fpath)//trim(fname)
+
+  ! Check gz exists
+  inquire(file=trim(climfile)//'.gz', exist=file_exists)
+  if (.not. file_exists) then
+    forcingData => null()
+    write (*, '("read_interpolatedCRU: ", a, " does not exist")') trim(climfile)//'.gz'
+    return
+  endif
+
+  ! Unzip (keep original .gz) with explicit status
+  call unzip_gzip_file(trim(climfile)//'.gz', ok=unzip_ok, quiet=.true.)
+  if (.not. unzip_ok) then
+    file_exists = .false.
+    forcingData => null()
+    write (*, '("read_interpolatedCRU: unzip failed for ", a)') trim(climfile)//'.gz'
+    return
+  endif
+
+  ! Confirm unzipped CSV exists
+  inquire(file=trim(climfile), exist=csv_exists)
+  if (.not. csv_exists) then
+    file_exists = .false.
+    forcingData => null()
+    write (*, '("read_interpolatedCRU: missing unzipped file ", a)') trim(climfile)
     return
   endif
 
@@ -497,35 +537,58 @@ subroutine read_interpolatedCRU(fpath,fprefix,GridID,year0,year1,forcingData,fil
   allocate(input_data(niterms,datalines))
   allocate(timecols(3,datalines))
 
-  ! Read in forcing data
-  open(11,file=climfile,status='old',ACTION='read',IOSTAT=istat2)
-  read(11,'(a160)',IOSTAT=istat2) commts ! One line comments
-  m = 0
-  do while (m < datalines .and. istat2 == 0) ! Only read in maximum of datalines
-    read(11,*,IOSTAT=istat2)(temp(n), n = 1,niterms)
-    m = m + 1
-    input_data(:,m) = temp(:)
-  enddo ! end of reading the forcing file
+  ! Read in forcing data (use newunit to avoid unit collisions)
+  open(newunit=u, file=climfile, status='old', action='read', iostat=istat2)
+  if (istat2 /= 0) then
+    file_exists = .false.
+    forcingData => null()
+    write (*, '("read_interpolatedCRU: cannot open ", a, ", iostat=", I0)') trim(climfile), istat2
+    deallocate(input_data, timecols)
+    return
+  endif
 
-  ! Close the file and delete it
-  close(11)    ! close forcing file
-  command = 'rm '//trim(climfile) ! Remove unziped file
-  call execute_command_line(command)
+  ! Header line
+  read(u,'(a160)', iostat=istat2) commts
+  if (istat2 /= 0) then
+    file_exists = .false.
+    forcingData => null()
+    write (*, '("read_interpolatedCRU: failed reading header from ", a, ", iostat=", I0)') trim(climfile), istat2
+    close(u)
+    deallocate(input_data, timecols)
+    return
+  endif
+
+  m = 0
+  do while (m < datalines .and. istat2 == 0)
+    read(u,*, iostat=istat2) (temp(n), n = 1,niterms)
+    if (istat2 == 0) then
+      m = m + 1
+      input_data(:,m) = temp(:)
+    endif
+  enddo
+
+  close(u)
+
+  ! Remove unzipped CSV (best effort; keep .gz)
+  command = 'rm ' // trim(climfile)
+  call execute_command_line(command, exitstat=exitstat)
+  ! Not fatal if rm fails
 
   ! Check the consistency between the file data lines and required
-  if(m /= datalines) then
-    write (*, '("In read_interpolatedCRU, File ",a," is shorter than needed: lines: ",I12)') trim(fname),m
-    file_exists = .False.
-    deallocate(input_data,timecols)
+  if (m /= datalines) then
+    write (*, '("In read_interpolatedCRU, File ",a," is shorter than needed: lines: ",I12)') trim(fname), m
+    file_exists = .false.
+    deallocate(input_data, timecols)
+    forcingData => null()
     return
   endif
 
   ! Setup the time table
-  m=0
+  m = 0
   do iyr = year0, year1
-    do iday=1, 365
-      do ihour = 1, steps_per_day ! 24
-        m =  m + 1
+    do iday = 1, 365
+      do ihour = 1, steps_per_day
+        m = m + 1
         timecols(1,m) = iyr
         timecols(2,m) = iday
         timecols(3,m) = 24.0 * (ihour - 1)/steps_per_day
@@ -535,97 +598,232 @@ subroutine read_interpolatedCRU(fpath,fprefix,GridID,year0,year1,forcingData,fil
 
   ! Put the data into forcing
   allocate(climateData(datalines))
-  do i=1,datalines
-     climateData(i)%year      = int(timecols(1,i))         ! Year
-     climateData(i)%doy       = int(timecols(2,i))         ! day of the year
-     climateData(i)%PAR       = input_data(1,i)*2.0        ! umol/m2/s
-     climateData(i)%radiation = input_data(1,i)            ! W/m2
-     climateData(i)%Tair      = input_data(2,i)  ! air temperature, K
-     climateData(i)%Tsoil     = input_data(2,i)*0.8 + 273.16*0.2  ! soil temperature, K
-     climateData(i)%RH        = Max(0.01, min(0.99, input_data(3,i) ))       ! relative humidity (0.xx)
-     climateData(i)%rain      = input_data(4,i)        ! kgH2O m-2 s-1
-     climateData(i)%windU     = input_data(5,i)        ! wind velocity (m s-1)
-     climateData(i)%P_air     = input_data(6,i)        ! pa
-     climateData(i)%CO2       = CO2_Hist(Min(CO2Yrs,Max(1,climateData(i)%year-1700+1))) ! CO2_c        !ppm
-     climateData(i)%eCO2      = climateData(i)%CO2 + 200. !ppm
-     climateData(i)%soilwater = 0.8    ! soil moisture, vol/vol
+  do i = 1, datalines
+     climateData(i)%year      = int(timecols(1,i))
+     climateData(i)%doy       = int(timecols(2,i))
+     climateData(i)%PAR       = input_data(1,i)*2.0
+     climateData(i)%radiation = input_data(1,i)
+     climateData(i)%Tair      = input_data(2,i)
+     climateData(i)%Tsoil     = input_data(2,i)*0.8 + 273.16*0.2
+     climateData(i)%RH        = max(0.01, min(0.99, input_data(3,i) ))
+     climateData(i)%rain      = input_data(4,i)
+     climateData(i)%windU     = input_data(5,i)
+     climateData(i)%P_air     = input_data(6,i)
+     climateData(i)%CO2       = CO2_Hist(min(CO2Yrs, max(1, climateData(i)%year-1700+1)))
+     climateData(i)%eCO2      = climateData(i)%CO2 + 200.
+     climateData(i)%soilwater = 0.8
   enddo
+
   forcingData => climateData
   write(*,*)"forcing from interpolated: hours,days,years", datalines,days_data,yr_data
 
-  !Close opened file and release memory
-  deallocate(input_data,timecols)
+  ! Release memory
+  deallocate(input_data, timecols)
 end subroutine read_interpolatedCRU
 
 !==============================================================
-  subroutine unzip_gzip_file(filename_gz)
-    character (len = *), intent(in) :: filename_gz
-    !----------local vars
-    character(len=256) :: command
-    integer :: iostat
+    subroutine unzip_gzip_file(filename_gz, ok, exitstat, out_file, quiet)
+    character(len=*), intent(in)            :: filename_gz
+    logical,          intent(out), optional :: ok
+    integer,          intent(out), optional :: exitstat
+    character(len=*), intent(out), optional :: out_file
+    logical,          intent(in),  optional :: quiet
 
-    ! Construct the gunzip command. The -k option keeps the original .gz file.
-    command = 'gunzip -k ' // trim(filename_gz)
-    call execute_command_line(command, exitstat=iostat)
-    if (iostat == 0) then
-      print *, 'Successfully unzipped ', trim(filename_gz)
-    else
-      print *, 'Error unzipping ', trim(filename_gz), ' (Exit status: ', iostat, ')'
-    end if
+    character(len=600) :: command
+    character(len=600) :: filename_out
+    integer :: est
+    logical :: q, gz_exists, out_exists
+    integer :: L
+
+    q = .false.
+    if (present(quiet)) q = quiet
+
+    if (present(ok)) ok = .false.
+    if (present(exitstat)) exitstat = -999
+
+    ! Check input exists
+    inquire(file=trim(filename_gz), exist=gz_exists)
+    if (.not. gz_exists) then
+      if (.not. q) write(*,'("unzip_gzip_file: missing ",a)') trim(filename_gz)
+      est = 2
+      if (present(exitstat)) exitstat = est
+      return
+    endif
+
+    ! Derive output filename by stripping trailing ".gz" if present
+    filename_out = trim(filename_gz)
+    L = len_trim(filename_out)
+    if (L >= 3) then
+      if (filename_out(L-2:L) == '.gz') filename_out = filename_out(1:L-3)
+    endif
+    if (present(out_file)) out_file = trim(filename_out)
+
+    ! If output already exists, treat as success (idempotent)
+    inquire(file=trim(filename_out), exist=out_exists)
+    if (out_exists) then
+      est = 0
+      if (present(exitstat)) exitstat = est
+      if (present(ok)) ok = .true.
+      return
+    endif
+
+    ! Unzip: keep .gz (-k), force overwrite (-f)
+    command = 'gunzip -kf ' // trim(filename_gz)
+    call execute_command_line(command, exitstat=est)
+
+    ! Verify output exists
+    inquire(file=trim(filename_out), exist=out_exists)
+
+    if (est /= 0 .or. .not. out_exists) then
+      if (.not. q) then
+        write(*,'("unzip_gzip_file: failed for ",a," exitstat=",I0)') trim(filename_gz), est
+        if (.not. out_exists) write(*,'("unzip_gzip_file: expected output missing: ",a)') trim(filename_out)
+      endif
+      if (present(exitstat)) exitstat = est
+      if (present(ok)) ok = .false.
+      return
+    endif
+
+    if (present(exitstat)) exitstat = est
+    if (present(ok)) ok = .true.
   end subroutine unzip_gzip_file
 
 !==============================================
-  subroutine nc_read_3D(FILE_NAME,field_idx,NX,NY,Ntime,DA)
-    ! This is the name of the data file we will create.
-    character (len = *), intent(in) :: FILE_NAME,field_idx
-    integer, intent(in) :: NX, NY, Ntime
-    real, intent(inout) :: DA(:,:,:)
+  subroutine nc_read_3D(file_name, var_name, da, start, count)
+    ! Read a 3-D netCDF variable. Optionally read a hyperslab using start/count.
+    character(len=*), intent(in) :: file_name, var_name
+    real, intent(out) :: da(:,:,:)
+    integer, intent(in), optional :: start(3), count(3)
 
-    !----- Local vars ----------------
-    integer :: ncid, varid  ! IDs were created with netCDF files
+    integer :: ncid, varid, ndims, xtype
+    integer :: dimids(3)
+    integer :: dlen(3)
+    integer :: s(3), c(3)
 
-    ! Open the file with NF90_NOWRITE as read-only access
-    call check( nf90_open(FILE_NAME, NF90_NOWRITE, ncid) )
-    call check( nf90_inq_varid(ncid, trim(field_idx), varid) )
-    call check( nf90_get_var(ncid, varid, DA) )
+    call check( nf90_open(trim(file_name), NF90_NOWRITE, ncid) )
+    call check( nf90_inq_varid(ncid, trim(var_name), varid) )
+    call check( nf90_inquire_variable(ncid, varid, xtype=xtype, ndims=ndims, dimids=dimids) )
+    if (ndims /= 3) then
+      write(*,*) 'ERROR: variable is not 3-D: ', trim(var_name), ' in ', trim(file_name)
+      stop
+    endif
+
+    call check( nf90_inquire_dimension(ncid, dimids(1), len=dlen(1)) )
+    call check( nf90_inquire_dimension(ncid, dimids(2), len=dlen(2)) )
+    call check( nf90_inquire_dimension(ncid, dimids(3), len=dlen(3)) )
+
+    if (present(start) .and. present(count)) then
+      s = start
+      c = count
+      if (size(da,1) /= c(1) .or. size(da,2) /= c(2) .or. size(da,3) /= c(3)) then
+        write(*,*) 'ERROR: hyperslab shape mismatch reading ', trim(var_name)
+        write(*,*) ' start/count=', s, c, ' array=', size(da,1), size(da,2), size(da,3)
+        stop
+      endif
+      if (any(s < 1)) then
+        write(*,*) 'ERROR: invalid start (<1) reading ', trim(var_name), ' start=', s
+        stop
+      endif
+      if (any(s + c - 1 > dlen)) then
+        write(*,*) 'ERROR: hyperslab out of bounds reading ', trim(var_name)
+        write(*,*) ' dims=', dlen, ' start/count=', s, c
+        stop
+      endif
+      call check( nf90_get_var(ncid, varid, da, start=s, count=c) )
+    else
+      if (size(da,1) /= dlen(1) .or. size(da,2) /= dlen(2) .or. size(da,3) /= dlen(3)) then
+        write(*,*) 'ERROR: full-field shape mismatch reading ', trim(var_name)
+        write(*,*) ' dims=', dlen, ' array=', size(da,1), size(da,2), size(da,3)
+        stop
+      endif
+      call check( nf90_get_var(ncid, varid, da) )
+    endif
+
     call check( nf90_close(ncid) )
-    print *, 'Read file: ncid=',ncid, 'varid=',varid
-
   end subroutine nc_read_3D
 
+
   !==============================================
-  subroutine nc_read_2D(FILE_NAME,field_idx,NX,NY,DA)
-    character (len = *), intent(in) :: FILE_NAME,field_idx
-    integer, intent(in) :: NX, NY
-    real, intent(inout) :: DA(:,:)
+  subroutine nc_read_2D(file_name, var_name, da, start, count)
+    ! Read a 2-D netCDF variable. Optionally read a hyperslab using start/count.
+    character(len=*), intent(in) :: file_name, var_name
+    real, intent(out) :: da(:,:)
+    integer, intent(in), optional :: start(2), count(2)
 
-    !----- Local vars ----------------
-    integer :: ncid, varid ! IDs were created with netCDF files
+    integer :: ncid, varid, ndims, xtype
+    integer :: dimids(2)
+    integer :: dlen(2)
+    integer :: s(2), c(2)
 
-    ! Open the file with NF90_NOWRITE as read-only access
-    call check( nf90_open(FILE_NAME, NF90_NOWRITE, ncid) )
-    call check( nf90_inq_varid(ncid, trim(field_idx), varid) ) ! Get the varid of the data variable
-    call check( nf90_get_var(ncid, varid, DA) )  ! Read the data.
-    call check( nf90_close(ncid) ) ! Close the file, freeing all resources.
-    print *, 'Read file: ncid=',ncid, 'varid=',varid
-  end subroutine nc_read_2D
-  !==============================================
-  subroutine nc_read_1D(FILE_NAME,field_idx,Ntime,DA)
-    ! This is the name of the data file we will read
-    character (len = *), intent(in) :: FILE_NAME,field_idx
-    integer, intent(in) :: Ntime
-    real, intent(inout) :: DA(:)
+    call check( nf90_open(trim(file_name), NF90_NOWRITE, ncid) )
+    call check( nf90_inq_varid(ncid, trim(var_name), varid) )
+    call check( nf90_inquire_variable(ncid, varid, xtype=xtype, ndims=ndims) )
+    if (ndims /= 2) then
+      write(*,*) 'ERROR: variable is not 2-D: ', trim(var_name), ' in ', trim(file_name)
+      stop
+    endif
+    call check( nf90_inquire_variable(ncid, varid, dimids=dimids) )
+    call check( nf90_inquire_dimension(ncid, dimids(1), len=dlen(1)) )
+    call check( nf90_inquire_dimension(ncid, dimids(2), len=dlen(2)) )
 
-    !----- Local vars ----------------
-    integer :: ncid, varid ! IDs were created with netCDF files
+    if (present(start) .and. present(count)) then
+      s = start
+      c = count
+      if (size(da,1) /= c(1) .or. size(da,2) /= c(2)) then
+        write(*,*) 'ERROR: hyperslab shape mismatch reading ', trim(var_name)
+        write(*,*) ' start/count=', s, c, ' array=', size(da,1), size(da,2)
+        stop
+      endif
+      if (any(s < 1)) then
+        write(*,*) 'ERROR: invalid start (<1) reading ', trim(var_name), ' start=', s
+        stop
+      endif
+      if (any(s + c - 1 > dlen)) then
+        write(*,*) 'ERROR: hyperslab out of bounds reading ', trim(var_name)
+        write(*,*) ' dims=', dlen, ' start/count=', s, c
+        stop
+      endif
+      call check( nf90_get_var(ncid, varid, da, start=s, count=c) )
+    else
+      if (size(da,1) /= dlen(1) .or. size(da,2) /= dlen(2)) then
+        write(*,*) 'ERROR: full-field shape mismatch reading ', trim(var_name)
+        write(*,*) ' dims=', dlen, ' array=', size(da,1), size(da,2)
+        stop
+      endif
+      call check( nf90_get_var(ncid, varid, da) )
+    endif
 
-    ! Open the file with NF90_NOWRITE as read-only access
-    call check( nf90_open(FILE_NAME, NF90_NOWRITE, ncid) )
-    call check( nf90_inq_varid(ncid, trim(field_idx), varid) )
-    call check( nf90_get_var(ncid, varid, DA) )
     call check( nf90_close(ncid) )
-    print *, 'Read file: ncid=',ncid, 'varid=',varid
+  end subroutine nc_read_2D
+
+  !==============================================
+  subroutine nc_read_1D(file_name, var_name, da)
+    ! Read a 1-D netCDF variable.
+    character(len=*), intent(in) :: file_name, var_name
+    real, intent(out) :: da(:)
+
+    integer :: ncid, varid, ndims, xtype
+    integer :: dimids(1)
+    integer :: dlen(1)
+
+    call check( nf90_open(trim(file_name), NF90_NOWRITE, ncid) )
+    call check( nf90_inq_varid(ncid, trim(var_name), varid) )
+    call check( nf90_inquire_variable(ncid, varid, xtype=xtype, ndims=ndims, dimids=dimids) )
+    if (ndims /= 1) then
+      write(*,*) 'ERROR: variable is not 1-D: ', trim(var_name), ' in ', trim(file_name)
+      stop
+    endif
+    call check( nf90_inquire_dimension(ncid, dimids(1), len=dlen(1)) )
+
+    if (size(da,1) /= dlen(1)) then
+      write(*,*) 'ERROR: shape mismatch reading ', trim(var_name), ' dims=', dlen(1), ' array=', size(da,1)
+      stop
+    endif
+
+    call check( nf90_get_var(ncid, varid, da) )
+    call check( nf90_close(ncid) )
   end subroutine nc_read_1D
+
 
 !===================================================
   subroutine nc_write(FILE_NAME,NDIMS,NX,NY)

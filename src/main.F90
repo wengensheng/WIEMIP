@@ -1,6 +1,6 @@
 ! ------------ Model driver -------------
 ! ------------- 08/30/2022 --------------
-! BiomeE global version 0.1, Ensheng Weng, 07/18/2025, almost done, 01/15/2025
+! BiomeE global version 0.1, Ensheng Weng, 07/18/2025, almost done, 01/15/2026
 
 program BiomeE
   !use omp_lib
@@ -20,6 +20,18 @@ program BiomeE
   INTEGER(kind=8) :: start_count, end_count, count_rate, count_max
   REAL(kind=8)    :: wall_time
   logical :: file_exists
+
+  ! If a namelist file is provided on the command line, use it; otherwise use default.
+  if (command_argument_count() >= 1) then
+    call get_command_argument(1, fnml)
+    fnml = adjustl(fnml)
+  endif
+  inquire(file=trim(fnml), exist=file_exists)
+  if (.not. file_exists) then
+    write(*,*) 'Namelist file does not exist: ', trim(fnml)
+    stop
+  endif
+
 
   ! ---------- Time stamp -------------
   call cpu_time(start_time)
@@ -50,6 +62,7 @@ program BiomeE
   ! Read in netCDF global data files
   call ReadNCfiles(ncfilepath, ncfields, yr_start, yr_end)
 #endif
+
   ! ---------- Time stamp -------------
   call cpu_time(end_time)
   elapsed_time = end_time - start_time
@@ -67,7 +80,6 @@ program BiomeE
   END IF
   PRINT *, "Data reading wall time:", wall_time, " minutes"
 
-
   !------------ Forcing data interpolation and model run ---------------------------
   !$omp parallel do private(GridID,forcingData,fno1,fno2,fno3,fno4,fno5,fno6) shared(GridLonLat, LandGrid)
   do m = grid_No1, grid_No2  ! Grids in GridLonLat
@@ -77,7 +89,15 @@ program BiomeE
     print '(A, I6, A, I6)', 'Working at grid: ', GridID, '. Grid No. ', m
     print '(A, I6, A, I6)', 'The ', m - grid_No1 + 1, 'th grid of ', grid_No2 - grid_No1 + 1
 
-#ifndef Use_InterpolatedData
+    ! --------- Get the forcingData for this grid -----------
+#ifdef Use_InterpolatedData
+    ! Read interpolated data from disk files. Moved here to avoid reading errors
+    call read_interpolatedCRU(int_fpath,int_prefix,GridID,yr_start,yr_end,forcingData,file_exists)
+    if(.not. file_exists)then
+      print '(A, I8, A)', 'Grid ', GridID, ' is skipped b/c of no input file or shorter than needed.'
+      cycle
+    endif
+#else
     ! Interpolate grid data to hourly
     call CRU_Interpolation(LandGrid(m),forcingData)
     if(WriteForcing)then
@@ -86,27 +106,15 @@ program BiomeE
     endif
 #endif
 
-    ! Set up output files for this grid
-    fno1=GridID + 1000000
-    fno2=GridID + 2000000
-    fno3=GridID + 3000000
-    fno4=GridID + 4000000
-    fno5=GridID + 5000000
-    fno6=GridID + 6000000
-    call setup_output_files() ! Setup output files before reading forcing data
-
-    ! Get this grid's forcingData
-#ifdef Use_InterpolatedData
-    ! Read interpolated data from disk files. Moved here to avoid reading errors
-    call read_interpolatedCRU(int_fpath,int_prefix,GridID,yr_start,yr_end,forcingData,file_exists)
-    if(.not. file_exists)then
-      print '(A, I8, A)', 'Grid ', GridID, ' is skipped b/c of no input file or shorter than needed.'
-      cycle
-    endif
-#endif
+    ! ------ Set up output files for this grid ----------------
+    fno1 = GridID + 1000000; fno2 = GridID + 2000000
+    fno3 = GridID + 3000000; fno4 = GridID + 4000000
+    fno5 = GridID + 5000000; fno6 = GridID + 6000000
+    call setup_output_files() ! Setup output files before reading forcing data (?)
 
     ! ------- Run model -----------
     call BiomeE_main()
+
 #ifdef Zip_outputs
     call zip_output_files()
 #endif
@@ -139,7 +147,7 @@ program BiomeE
   elapsed_time = end_time - start_time
   write(*,'(A,3(f7.2,","))')'Total CPU time (minutes): ', elapsed_time/60.
 
-    ! Get the ending time
+  ! Get the ending time
   CALL SYSTEM_CLOCK(COUNT=end_count)
   ! Calculate wall time
   IF (end_count < start_count) THEN

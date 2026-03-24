@@ -7,10 +7,9 @@ FSRCS="src/datatypes.F90 \
        src/main.F90"
 
 CPPFLAGS=''
-#CPPFLAGS+="-DHydro_test"
+#CPPFLAGS+='-DHydro_test'
 #CPPFLAGS+=' -DSingleTreeTest'
-CPPFLAGS+=' -DFixedFireRisk'
-CPPFLAGS+=" -DScreenOutput"
+CPPFLAGS+=' -DScreenOutput'
 
 echo $FSRCS
 
@@ -23,8 +22,8 @@ gfortran $FSRCS $CPPFLAGS -o ess
 # namelist file (Parameter and model setting file)
 #fparameter='./para_files/parameters_BCI_EG_DC.nml'
 #fparameter='./para_files/parameters_Konza_test.nml'
-fparameter='./para_files/parameters_ORNL_test.nml'
 #fparameter='./para_files/parameters_BCItest.nml'
+fparameter='./para_files/parameters_ORNL_test.nml'
 
 echo $fparameter
 
@@ -32,7 +31,7 @@ echo $fparameter
 cat $fparameter > ./para_files/input.nml
 
 # Run model
-./ess
+#./ess
 
 rm ./para_files/input.nml
 rm ess

@@ -493,6 +493,8 @@ module datatypes
     real :: annualCH4 = 0.0
     real :: NupYr     = 0.0 ! accumulated N uptake kgN m-2 yr-1
     real :: NfixedYr  = 0.0 ! fixe N in a tile
+  ! conservation diagnostics
+    real :: annualconsrvC   = 0.0 ! Conservation dian
     ! for annual reporting at tile level
     real :: NSC, SeedC, leafC, rootC, SwC, HwC
     real :: NSN, SeedN, leafN, rootN, SwN, HwN
@@ -830,6 +832,7 @@ module datatypes
   character(len=80)  :: filepath_in = './input/'
   character(len=80)  :: filepath_out = './output/'
   character(len=80)  :: runID = 'test'
+  character(len=80)  :: ann_fmt_string = '(2(I5,","),120(E15.6,","))'
   character(len=160) :: climfile = 'ORNL_forcing.txt'
   character(len=160) :: Scefile = 'ORNL_forcing.txt'
   character(len=160) :: PaleoPfile = 'RMA_P.csv' ! for DroughtPaleo
@@ -958,7 +961,7 @@ module datatypes
   init_fast_SOC, init_slow_SOC, init_mineralN, N_input,       &
   Pr_thld, MI0DeSB, MI0C3C4, TcrTREE, TcrC3C4,                &
   ! Model run controls
-  filepath_in,filepath_out,runID,climfile,Scefile,StartLine,  &
+  filepath_in,filepath_out,runID,ann_fmt_string,climfile,Scefile,StartLine,  &
   PaleoPfile, PaleoTfile, iDraw,                              &
   N_VegTile,siteLAT,model_run_years,yr_ResetVeg,yr_Baseline,  &
   outputhourly,outputdaily,Sc_prcp,Sc_dT,CO2_c,CO2Tag,        &

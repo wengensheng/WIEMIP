@@ -411,6 +411,7 @@ module io_mod
     type(cohort_type), pointer :: cc
     real treeG, fseed, fleaf, froot,fwood,dDBH,dBA,dCA
     real :: plantC, plantN, soilC, soilN,BMtot
+    real, save :: plantCpr = 0.0, soilCpr = 0.0 
     integer :: f_cht,i,j,iyr_out,yr_Eq,yr_Sc
 
     ! Max LAI
@@ -520,6 +521,11 @@ module io_mod
       plantN = vegn%NSN + vegn%SeedN + vegn%leafN +                &
       vegn%rootN + vegn%SwN + vegn%HwN
       soilN  = sum(vegn%SON(:)) + vegn%mineralN
+
+      vegn%annualconsrvC = vegn%annualNPP - vegn%annualRh -        &
+                           vegn%C_burned - (soilC + plantC -       &
+                           soilCpr - plantCpr)
+
 #ifdef FACE_run
       write(fno6,'(1(I5,","),85(E15.6,","))') iyears, &
       vegn%CAI,vegn%LAImax,vegn%annualGPP,vegn%annualResp,vegn%annualRh,  &
@@ -545,7 +551,7 @@ module io_mod
       (vegn%wcl(j),j=1,soil_L)
 
 #else
-      write(fno6,'(2(I5,","),120(E15.6,","))')  &
+      write(fno6,ann_fmt_string)  &
       vegn%tileID,iyears,vegn%CAI,vegn%LAI,vegn%annualGPP,            &
       vegn%annualResp,vegn%annualRh,vegn%C_burned,vegn%YearlyTmp,     &
       vegn%annualPrcp,vegn%SoilWater,vegn%annualTrsp,vegn%annualEvap, &
@@ -557,9 +563,11 @@ module io_mod
       (vegn%wcl(j),j=1,soil_L),vegn%NfixedYr*1000,vegn%NupYr*1000,    &
       vegn%Nm_Soil*1000,vegn%Nm_Fire*1000, vegn%N_OutYr*1000,         &
       vegn%TreeCA,vegn%GrassCA,vegn%GrassBM,vegn%annualPET,           &
-      vegn%Frisk,vegn%Pfire,vegn%annualCH4
+      vegn%Frisk,vegn%Pfire,vegn%annualCH4,vegn%annualconsrvC
 #endif
 
+    soilCpr = soilC
+    plantCpr = plantC
     endif
 
   end subroutine annual_diagnostics
@@ -1228,7 +1236,7 @@ module io_mod
     'fineN', 'strucN', 'McrbN', 'fastSON', 'slowSON','mineralN', &
     'WC1_5','WC2_25','WC3_50','WC4_100','WC5_120',               &
     'N_fxed','N_uptk','Nm_SL','Nm_FR','N_loss',                  &
-    'TreeCA','GrassCA','BMgrass','PET','Frisk','Pfire','CH4'
+    'TreeCA','GrassCA','BMgrass','PET','Frisk','Pfire','CH4','consrvC'
 
 #endif
 
